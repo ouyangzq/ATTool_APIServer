@@ -364,7 +364,7 @@ int main(int argc,char *argv[]) {
         fd = OpenDev(dev_name); //打开串口 
         if(fd>0)
         {
-            set_speed(fd,152000); //设置波特率
+            set_speed(fd,19200); //设置波特率
             printf("set speed success!\n");
         }     
         else  
