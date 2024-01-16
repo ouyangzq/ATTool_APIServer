@@ -15,19 +15,33 @@
  
 int speed_arr[] = { B38400, B19200, B9600, B4800, B2400, B1200, B300, B38400, B19200, B9600, B4800, B2400, B1200, B300, };
 int name_arr[] = {38400, 19200, 9600, 4800, 2400, 1200, 300, 38400, 19200, 9600, 4800, 2400, 1200, 300, };
- 
+int fd =-1;
+FILE* pf;// = fdopen(fd, "w");
+FILE* pfi;// = fdopen(fd, "r");
+char *ATb = "\r\n";
+
 int OpenDev(char *Dev)
 {
  // , O_RDWR|O_NOCTTY
-  int fd = open(Dev,O_RDWR | O_NOCTTY | O_NONBLOCK);
+  fd = open(Dev,O_RDWR | O_NOCTTY | O_NONBLOCK);
   if(-1 == fd)
     {
       perror("Can't Open Serial PPPPort");
       return -1;
-    } 
-  else 
-    {
-      printf("Open com success!\n");
+    } else {
+      // printf("Open com success!\n");
+      set_speed(fd,152000); //设置波特率
+      if(set_Parity(fd,8,1,'N')==FALSE) //设置校验位 
+      {
+          printf("Set Parity Error\n"); 
+          exit(1);
+      }
+      else
+      {
+          printf("Set Parity Success!\n"); 
+      }
+      pf = fdopen(fd, "w");
+			pfi = fdopen(fd, "r");
       return fd;
     }
 } 
@@ -124,3 +138,24 @@ int set_Parity(int fd,int databits,int stopbits,int parity)
    } 
     return (TRUE);
 }
+
+
+serial_parse SendAT(char *at){
+  serial_parse phandle;
+  phandle.rxbuffsize = 0;
+  if(fd<0){
+    perror("Can't Open Serial PPPPort");
+    return phandle;
+  }
+  char *ATcStr = strcat(at, ATb);
+  fputs(ATcStr, pf);
+  int nread;
+  printf("%s",ATcStr);
+  usleep(10000);
+  nread = read(fd , phandle.buff + phandle.rxbuffsize, MAX_BUFF_SIZE - phandle.rxbuffsize);
+  phandle.rxbuffsize += nread;
+  phandle.buff[phandle.rxbuffsize] = '\0';
+  printf("%s",phandle.buff);
+  return phandle;
+}
+
