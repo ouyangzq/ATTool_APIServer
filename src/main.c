@@ -9,7 +9,6 @@
 #include <time.h>
 
 #include <assert.h> 
-#include <sys/time.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <termios.h>
@@ -21,9 +20,8 @@
 #include <signal.h>
 #include "openDev.h"
 #include "json.h"
+#include "tool.h"
 #include <sys/socket.h>
-
-
 #ifdef __linux__
 #include <sys/time.h>
 unsigned long long reckon_usec(void)
@@ -38,214 +36,49 @@ unsigned long long reckon_usec(void)
 #define reckon_usec() 0
 #endif 
 
-/* for memory allocation test */
-#if 1
-
-static int count = 0;
-static int use = 0;
-
-void* test_malloc(size_t size)
-{
-	void* p;
-
-	p = malloc(size + sizeof(int));
-	if (p)
-	{
-		count++;
-		*(int*)p = size;
-		use += size;
-	}
-	return (void*)((char*)p + sizeof(int));
-}
-
-void test_free(void* block)
-{
-	void* p = block;
-	p = (void *)((char*)p - sizeof(int));
-	use -= *(int*)p;
-	count--;
-	free(p);
-}
-
-void check_used(void)
-{
-	printf("count = %d use = %d\r\n", count, use);
-	if (count)
-	{
-		printf("***************************************************************\r\n");
-		printf("************************* error *******************************\r\n");
-		printf("***************************************************************\r\n");
-	}
-}
-#else 
-#define test_malloc malloc
-#define test_free free
-#define check_used()
-#endif 
-
+static struct termios save_tio;
+static int port = -1;
+static const char* dev = "/dev/ttyUSB2";
+static const char* storage = "";
+static const char* dateformat = "%D %T";
 
 int fd;
-/*字符包含判断*/
-int starts_with(const char* prefix, const char* str)
-{
-	while(*prefix)
-	{
-		if (*prefix++ != *str++)
-		{
-			return 0;
-		}
-	}
-	return 1;
-}
-/*判断是否存在*/
-int FileExist(const char* filename)
-{
-    if (filename && access(filename, F_OK) == 0) {
-        return 1;
-    }
-    return 0;
-}
-/*字符转小写*/
-char* str_tolower(const char* str)
-{
-	size_t len = strlen(str);
-    char *lower = calloc(len+1, sizeof(char));
-    for (size_t i = 0; i < len; ++i) {
-        lower[i] = tolower((unsigned char)str[i]);
-    }
-	/*free(upper);*/
-	return lower;
-}
-/*字符转大写*/
-char* str_toupper(const char* str)
-{
-	size_t len = strlen(str);
-    char *upper = calloc(len+1, sizeof(char));
-    for (size_t i = 0; i < len; ++i) {
-        upper[i] = toupper((unsigned char)str[i]);
-    }
-	/*free(upper);*/
-	return upper;
-}
-/*char*转char[]*/
-char strx_tostrarr(const char* str)
-{
-	return 0;
-}
-/*
- *  这里的内容是处理%20之类的东西！是"解码"过程。
- *  %20 URL编码中的‘ ’(space)
- *  %21 '!' %22 '"' %23 '#' %24 '$'
- *  %25 '%' %26 '&' %27 ''' %28 '('......
- *  相关知识html中的‘ ’(space)是&nbsp
- */
-void encode_str(char* to, int tosize, const char* from)
-{
-    int tolen;
- 
-    for (tolen = 0; *from != '\0' && tolen + 4 < tosize; ++from)
-    {
-        if (isalnum(*from) || strchr("/_.-~", *from) != (char*)0)
-        {
-            *to = *from;
-            ++to;
-            ++tolen;
-        }
-        else
-        {
-            sprintf(to, "%%%02x", (int) *from & 0xff);
-            to += 3;
-            tolen += 3;
-        }
- 
-    }
-    *to = '\0';
-}
-// 16进制数转化为10进制
-int hexit(char c)
-{
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
- 
-    return 0;
-}
 
-void decode_str(char *to, char *from)
-{
-    for ( ; *from != '\0'; ++to, ++from  )
-    {
-        if (from[0] == '%' && isxdigit(from[1]) && isxdigit(from[2]))
-        {
- 
-            *to = hexit(from[1])*16 + hexit(from[2]);
- 
-            from += 2;
-        }
-        else
-        {
-            *to = *from;
- 
-        }
- 
-    }
-    *to = '\0';
-}
-//字符向右查找实现截取内容
-int trim_dots(const char * path)
-{
-    char *  pos = NULL;
-    pos = strrchr(path, '/');
-    printf("%s\n", pos);
-
-    if(pos == NULL)
-    {
-        perror("strrchr");
-        return -1;
-    }
-    if((strcmp(pos+1, ".") == 0) || (strcmp(pos+1, "..") == 0))
-        return 0;
-    else
-        return -2;
-
-    return 0;
-}
-// 创建函数（方法一）：是否包含字符串函数
-int is_in(char *wenben, char *search_word)
-{
-    int i = 0, j = 0, flag = -1;
-    while (i < strlen(wenben) && j < strlen(search_word))
-    {
-        if (wenben[i] == search_word[j])
-        { //如果字符相同则两个字符都增加
-            i++;
-            j++;
-        }
-        else
-        {
-            i = i - j + 1; //主串字符回到比较最开始比较的后一个字符
-            j = 0;         //字串字符重新开始
-        }
-        if (j == strlen(search_word))
-        {             //如果匹配成功
-            flag = 1; //字串出现
-            break;
-        }
-    }
-    return flag;
-}
-
-char *ATb = "\r\n";
 char *dev_name = "/dev/ttyUSB3";//根据实际情况选择串口
 int PORT = 8888;
-
 #define _CRT_SECURE_NO_WARNINGS
 #define BUFFER_SIZE 4096
 
+
+static void usage()
+{
+	fprintf(stderr,
+		"usage: [options] send phoneNumber message\n"
+		"       [options] recv\n"
+		"       [options] delete msg_index | all\n"
+		"       [options] status\n"
+		"       [options] ussd code\n"
+		"       [options] at command\n"
+		"options:\n"
+		"\t-b <baudrate> (default: 115200)\n"
+		"\t-d <tty device> (default: /dev/ttyUSB0)\n"
+		"\t-D debug (for ussd and at)\n"
+		"\t-f <date/time format> (for sms/recv)\n"
+		"\t-j json output (for sms/recv)\n"
+		"\t-R use raw input (for ussd)\n"
+		"\t-r use raw output (for ussd and sms/recv)\n"
+		"\t-s <preferred storage> (for sms/recv/status)\n"
+		);
+	exit(2);
+}
+static void timeout()
+{
+	fprintf(stderr,"No response from modem.\n");
+	exit(2);
+}
+
 int handle(int conn) {
+
 	int len = 0;
 	char buffer[BUFFER_SIZE];
 	char *pos = buffer;
@@ -282,53 +115,34 @@ int handle(int conn) {
 		char* suffix;
 		if ((suffix = strrchr(enstr, '/')) != NULL)
 			suffix = suffix + 1;
- 		if (strcmp(suffix, "favicon.ico") == 0)
-		{
+ 		if (strcmp(suffix, "favicon.ico") == 0){
 
 		}
 		else{
+
 			json_t json, t;
 			/* create root node */
 			json = json_create_object(NULL);
+			time_t currentTime;
+			currentTime = time(NULL);
+			json_add_int_to_object(json, "time", (long)currentTime);
 			char a[] ="HTTP/1.1 200 OK\r\nConnection: close\r\nAccept-Ranges: bytes\r\nContent-Type: application/json\r\n\r\n";
 			if(starts_with("AT",suffix) == 0 && starts_with("at",suffix) == 0 && starts_with("At",suffix) == 0 && starts_with("aT",suffix) == 0){
 				json_add_string_to_object(json, "Code", "404");
 				json_add_string_to_object(json, "AT", suffix);
 			}
-			else if (strcmp(str_toupper(suffix), "AT+CMGL=4") == 0)
+			else if (strstr(str_toupper(suffix), "AT+CMGL=") || strstr(str_toupper(suffix), "AT+CMGR="))
 			{
 				json_add_string_to_object(json, "Code", "404");
-				json_add_string_to_object(json, "AT", "不支持读取短信列表，只可以当条读取");
+				json_add_string_to_object(json, "AT", "不支持读取短信列表");
 			}
 			else
 			{
-
-				//printf("1: %d\n", starts_with("AT",suffix));
-				int nread;
-				char buffer[MAX_BUFF_SIZE];
-				serial_parse phandle;
-				phandle.rxbuffsize = 0;
-				//char ATa[] ="AT+QENG=\"servingcell\"";
-				
-				char *ATcStr = strcat(suffix, ATb);
-				int ATlen = strlen(ATcStr); // 获取C风格字符串长度
-				char sendAT[ATlen + 1]; // 创建与C风格字符串相同大小的char数组（+1表示空字符'\0'）
-				strcpy(sendAT, ATcStr); // 将C风格字符串复制到char数组中
-				write(fd, sendAT, strlen(sendAT));
-				usleep(10000);  //休眠1ms
-
-				nread = read(fd , phandle.buff + phandle.rxbuffsize, MAX_BUFF_SIZE - phandle.rxbuffsize);
-				phandle.rxbuffsize += nread;
-				phandle.buff[phandle.rxbuffsize] = '\0';
+				serial_parse phandle = SendAT(suffix);
 				json_add_string_to_object(json, "Code", "200");
 				json_add_string_to_object(json, "AT", suffix);
 				json_add_string_to_object(json, "Result", phandle.buff);
-				printf("data: %s\n", phandle.buff);
-
 			}
-
-	
-
 			char* out;
 			int len;
 			if (!json) return -1;
@@ -336,12 +150,10 @@ int handle(int conn) {
 			if (!out) return -1;
 			char *b = out;
 			char *cStr = strcat(a, b);
-			int len2 = strlen(cStr); // 获取C风格字符串长度
-			char result[len2]; // 创建与C风格字符串相同大小的char数组（+1表示空字符'\0'）
-			strcpy(result, cStr); // 将C风格字符串复制到char数组中
-			send(conn, (void *)result, sizeof(result), 0);
-
-
+			char result[strlen(cStr)];
+			strcpy(result, cStr);
+			send(conn, result, sizeof(result), 0);
+			//send(conn, (void *)result, sizeof(result), 0);
 		}
 	}
 	close(conn);
@@ -349,32 +161,64 @@ int handle(int conn) {
 }
 
 
-
-
 int main(int argc,char *argv[]) {
 
-	/* Used for testing memory usage */
-	json_set_hooks(test_malloc, test_free, NULL);
+	// int ch;
+	// int baudrate = 115200;
+	// int rawinput = 0;
+	// int rawoutput = 0;
+	// int jsonoutput = 0;
+	// int debug = 0;
+
+	// while ((ch = getopt(argc, argv, "b:d:Ds:f:jRr")) != -1){
+	// 	switch (ch) {
+	// 	case 'b': baudrate = atoi(optarg); break;
+	// 	case 'd': dev = optarg; break;
+	// 	case 'D': debug = 1; break;
+	// 	case 's': storage = optarg; break;
+	// 	case 'f': dateformat = optarg; break;
+	// 	case 'j': jsonoutput = 1; break;
+	// 	case 'R': rawinput = 1; break;
+	// 	case 'r': rawoutput = 1; break;
+	// 	default:
+	// 		usage();
+	// 	}
+	// }
+
+	// argv += optind; argc -= optind;
+
+	// if (argc < 1)
+	// 	usage();
+	// if (!strcmp("send", argv[0]))
+	// {
+	// 	if(argc < 3)
+	// 		usage();
+	// 	if(strlen(argv[2]) > 160)
+	// 		fprintf(stderr,"sms message too long: '%s'\n", argv[2]);
+	// }else if (!strcmp("delete",argv[0]))
+	// {
+	// 	if(argc < 2)
+	// 		usage();
+	// }else if (!strcmp("recv", argv[0]))
+	// {
+	// }else if (!strcmp("status", argv[0]))
+	// {
+	// }else if (!strcmp("ussd", argv[0]))
+	// {
+	// }else if (!strcmp("at", argv[0])){
+	// 	if(argc < 2)
+	// 		usage();
+	// }else{
+	// 	usage();
+	// }
+		
+
+	// signal(SIGALRM,timeout);
+
     //int fd;
 	PORT = 8888;
-	ATb = "\r\n";
     //dev_name = "/dev/ttyUSB2";//根据实际情况选择串口
-    while(1) 
-    {  
-        fd = OpenDev(dev_name); //打开串口 
-        if(fd>0)
-        {
-            set_speed(fd,19200); //设置波特率
-            printf("set speed success!\n");
-        }     
-        else  
-        { 
-            printf("Can't Open Serial Port!\n"); 
-            sleep(1);  //休眠1s
-            continue; 
-        } 
-        break;
-    }
+    fd = OpenDev(dev_name);
 
     if(set_Parity(fd,8,1,'N')==FALSE) //设置校验位 
     {
@@ -418,5 +262,6 @@ int main(int argc,char *argv[]) {
 			continue;
 		}
 	}
+	close(fd);
 	return 0;
 }
