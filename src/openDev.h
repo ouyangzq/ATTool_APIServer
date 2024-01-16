@@ -16,5 +16,5 @@ typedef struct _serial_parse
 int OpenDev(char *Dev);
 void set_speed(int fd, int speed);
 int set_Parity(int fd,int databits,int stopbits,int parity);
-
+serial_parse SendAT(char *at);
 #endif
